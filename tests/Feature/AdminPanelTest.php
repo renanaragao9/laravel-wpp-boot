@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Enums\DemandStatus;
 use App\Enums\WebhookLogStatus;
 use App\Enums\WhatsAppDriver;
-use App\Filament\Resources\Demands\Pages\ListDemands;
 use App\Filament\Resources\Demands\Pages\ViewWhatsAppDemand;
 use App\Filament\Resources\MenuNodes\Pages\CreateWhatsAppMenuNode;
 use App\Filament\Resources\WebhookLogs\Pages\ListWebhookLogs;
@@ -99,22 +98,11 @@ class AdminPanelTest extends TestCase
             ->assertHasFormErrors(['sector' => 'required']);
     }
 
-    public function test_tables_filter_by_status_driver_and_log_status(): void
+    public function test_logs_table_filters_by_status(): void
     {
         $this->actingAs(User::factory()->create(['is_master' => true]));
-        $open = $this->demand();
-        $done = $this->demand(['status' => DemandStatus::Done, 'driver' => WhatsAppDriver::Twilio, 'phone' => '1']);
         $ok = WhatsAppWebhookLog::create(['driver' => WhatsAppDriver::Meta, 'status' => WebhookLogStatus::Processed]);
         $bad = WhatsAppWebhookLog::create(['driver' => WhatsAppDriver::Meta, 'status' => WebhookLogStatus::Failed]);
-
-        Livewire::test(ListDemands::class)
-            ->filterTable('status', 'done')
-            ->assertCanSeeTableRecords([$done])
-            ->assertCanNotSeeTableRecords([$open])
-            ->resetTableFilters()
-            ->filterTable('driver', 'meta')
-            ->assertCanSeeTableRecords([$open])
-            ->assertCanNotSeeTableRecords([$done]);
 
         Livewire::test(ListWebhookLogs::class)
             ->filterTable('status', 'failed')

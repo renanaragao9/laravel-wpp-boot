@@ -9,6 +9,7 @@ use App\Enums\WhatsAppDriver;
 use App\Services\WhatsApp\Drivers\EvolutionProvider;
 use App\Services\WhatsApp\Drivers\MetaProvider;
 use App\Services\WhatsApp\Drivers\TwilioProvider;
+use App\Services\WhatsApp\Drivers\WebProvider;
 
 class ProviderManager
 {
@@ -18,6 +19,7 @@ class ProviderManager
             WhatsAppDriver::Meta => app(MetaProvider::class),
             WhatsAppDriver::Evolution => app(EvolutionProvider::class),
             WhatsAppDriver::Twilio => app(TwilioProvider::class),
+            WhatsAppDriver::Web => app(WebProvider::class),
         };
     }
 }

@@ -83,4 +83,10 @@ class MetaWebhookTest extends WebhookTestCase
 
         $this->assertSame('2', WhatsAppWebhookLog::firstOrFail()->option);
     }
+
+    public function test_authorization_runs_before_validation_so_unsigned_garbage_gets_403_not_422(): void
+    {
+        $this->postMeta(['entry' => 'invalido'], 'wrong-secret')->assertForbidden();
+        $this->postMeta(['entry' => 'invalido'])->assertStatus(422);
+    }
 }

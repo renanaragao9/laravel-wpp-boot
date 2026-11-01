@@ -3,7 +3,7 @@
 Bot de atendimento para WhatsApp. Recebe mensagens por **webhook** de três provedores (**WhatsApp Cloud API da Meta**, **Evolution API** ou **Twilio**), conduz o contato por um **menu em árvore** e, quando ele escolhe um setor, abre uma **demanda** para a equipe responder pelo painel.
 
 - **Stack:** Laravel 13, PHP 8.3+, Filament 5 (Livewire 4), fila no banco de dados.
-- **Painel:** `/admin` (a rota `/` redireciona para o login).
+- **Painel:** `/admin`. A rota `/` abre o **chat web** para visitantes (veja [Chat web](#chat-web)).
 - **Desenho:** baseado no módulo de WhatsApp do Cronos (webhook da Evolution, menu, conversas e demandas), agora com vários provedores.
 
 ## Sumário
@@ -13,6 +13,7 @@ Bot de atendimento para WhatsApp. Recebe mensagens por **webhook** de três prov
 3. [Configuração dos provedores](#configuração-dos-provedores)
 4. [Como usar o painel](#como-usar-o-painel)
 5. [Como o bot conversa](#como-o-bot-conversa)
+   - [Chat web (rota /)](#chat-web)
 6. [Arquitetura](#arquitetura)
 7. [Banco de dados](#banco-de-dados)
 8. [Adicionar um novo provedor](#adicionar-um-novo-provedor)
@@ -37,7 +38,7 @@ WhatsApp ──► Meta | Evolution | Twilio ──► POST /api/webhooks/{prove
                               Painel: a equipe responde e conclui a demanda
 ```
 
-1. O provedor chama o webhook. O código **autentica** a chamada (veja a seção de provedores), grava um **log** com o payload e enfileira o processamento. O webhook responde na hora (a Meta reenvia se demorar).
+1. O provedor chama o webhook. A `WhatsAppWebhookRequest` **autentica** a chamada (assinatura ou token, veja a seção de provedores) antes de qualquer validação; depois o código grava um **log** com o payload e enfileira o processamento. O webhook responde na hora (a Meta reenvia se demorar).
 2. O job leva a mensagem à **máquina de estados** do menu.
 3. Enquanto o contato navega, o bot responde com o menu. Ao escolher uma opção do tipo **Setor**, abre-se uma **demanda** e o bot **para de responder** esse contato: as mensagens dele passam a ser gravadas na demanda.
 4. A equipe responde pelo painel (a resposta sai pelo provedor de onde a conversa veio). Ao **concluir** a demanda, o contato volta a falar com o bot.
@@ -193,13 +194,16 @@ Menu inicial  ("Olá! 👋 Bem-vindo ao nosso atendimento...")
 - O seeder **só roda se não existir nenhuma opção**: nunca sobrescreve um menu já configurado. Para recarregar o exemplo, remova as opções existentes e rode `php artisan db:seed --class=MenuNodeSeeder`.
 - Os testes garantem que o menu é consistente (uma só raiz, nenhum menu sem opções, números sem repetição, setores sem filhos) e que **todo setor é alcançável** digitando os números do caminho.
 
-### Atendimento → Demandas
+### Atendimento → Demandas (kanban)
 
-Lista as demandas abertas pelo bot, com filtros por status, setor, provedor, atendente e data.
+`/admin/demandas` é um **quadro kanban**, com uma coluna por status: **Aberta**, **Em andamento**, **Aguardando**, **Pausada** e **Concluída** (cada uma com a contagem). Cada card mostra o título (`Setor - Opção`), o setor, o contato (avatar com iniciais, nome e telefone), o provedor, o atendente, há quanto tempo foi aberta e a última mensagem.
 
-- **Responder:** envia uma mensagem ao contato pelo mesmo provedor da conversa, grava na demanda e, se estava **Aberta**, passa para **Em andamento** atribuindo você como atendente.
-- **Concluir:** encerra a demanda e a conversa; na próxima mensagem o contato volta ao menu do bot.
-- **Ver / Editar:** a página da demanda mostra o histórico de **mensagens**; a edição permite mudar status, atendente e observações internas.
+- **Arrastar e soltar:** arraste o card entre as colunas para mudar o status, ou dentro da coluna para mudar a ordem (a posição é guardada em `position`). Não há dependência extra: o arrastar é o nativo do Filament (Alpine Sort).
+- **Concluir:** soltar um card na coluna **Concluída** pede **confirmação** (a conversa volta para o bot na próxima mensagem do contato). Se você cancelar, o card volta para a coluna de origem. Um card concluído pode ser reaberto arrastando-o de volta.
+- **Abrir:** o botão **Abrir** do card abre um painel lateral com o **histórico da conversa** e um campo para **responder**; a resposta sai pelo mesmo provedor da conversa e, se a demanda estava **Aberta**, ela passa para **Em andamento** com você como atendente. Em demandas concluídas o painel é só leitura. O botão **Ver detalhes** leva à página completa (status, atendente, observações internas e mensagens).
+- **Filtros:** busca por contato, telefone ou título, e filtros de setor, provedor e atendente (todos, minhas demandas, sem atendente). Eles ficam na URL, então dá para compartilhar uma visão filtrada.
+- **Atualização:** o quadro se atualiza sozinho a cada 20 segundos (quando a aba está visível), então novas demandas do WhatsApp ou do chat web aparecem sem recarregar.
+- **Limites:** cada coluna mostra até 100 cards; a coluna **Concluída** mostra os 15 mais recentes e informa o total. Demandas do chat web aparecem como "Chat web" (o identificador interno não é exibido).
 - Demandas não são criadas à mão: nascem do bot.
 
 ### Bot → Logs de webhook
@@ -228,6 +232,33 @@ Regras do `NavigateMenuService`:
 
 As respostas saem pelo **mesmo provedor** de onde a mensagem chegou. Falhas de envio são registradas no log da aplicação e não derrubam o processamento.
 
+## Chat web
+
+A rota `/` abre uma página de chat (Blade, sem dependências) para qualquer visitante. Ele segue **exatamente as mesmas regras do WhatsApp**: a mensagem do visitante passa pelo mesmo `NavigateMenuService`, então o menu, a demanda por setor, o silêncio do bot com atendente, o `0` para reiniciar e o timeout de inatividade funcionam igual. A diferença é só o canal: a demanda nasce com o provedor **Web**.
+
+```
+Visitante em /  ──► POST /api/chat                          cria a sessão e já mostra o menu inicial
+        │            POST /api/chat/{token}/messages        o visitante digita "2", "1"...  → NavigateMenuService
+        ▲            GET  /api/chat/{token}/messages?after=ID    polling a cada 3 s (só o que é novo)
+        │
+        └── ao escolher um Setor: abre a demanda (Web); o bot silencia
+            Painel → Demandas → Responder  (grava em `messages`; o polling entrega ao visitante)
+```
+
+- **Iniciar:** o visitante informa nome (obrigatório), e-mail e telefone (opcionais). O chat abre com o **menu inicial**, como a primeira mensagem de um contato no WhatsApp. Nenhuma demanda é aberta ainda.
+- **Navegar:** o visitante digita o número da opção. Opções de **Menu** abrem o submenu; opções de **Setor** abrem a demanda e o bot avisa que a solicitação foi encaminhada. Veja [Como o bot conversa](#como-o-bot-conversa).
+- **Com a demanda aberta:** o bot **para de responder**; as mensagens do visitante vão para o histórico da demanda, e a equipe responde pelo botão **Responder** (o mesmo `ReplyDemandService` do WhatsApp). Ao **concluir** a demanda, a próxima mensagem do visitante volta a mostrar o menu.
+- **Polling:** a página consulta `GET /api/chat/{token}/messages?after={último id}` a cada 3 segundos (e pausa com a aba oculta). O token fica no `localStorage`, então recarregar a página **retoma** a conversa. O botão **Nova conversa** descarta o token e volta ao formulário.
+- **Painel:** a demanda aparece com o provedor **Web (chat do site)**, e a página dela mostra o e-mail e o telefone informados pelo visitante.
+- **Identificação:** cada sessão tem um identificador interno (`web-...`) que faz o papel do "telefone" nas conversas e demandas, igual ao número no WhatsApp. Ele nunca é enviado ao navegador.
+
+Segurança do chat:
+
+- O **token** da sessão tem 48 caracteres aleatórios e é o único acesso à conversa; sessões diferentes não enxergam umas às outras.
+- As rotas têm limite de requisições (`throttle`): 10 inícios/min, 30 envios/min e 120 consultas/min por IP.
+- O texto é validado (até 2.000 caracteres) e sempre exibido como **texto puro** na página (sem interpretar HTML).
+- O chat é público por natureza: qualquer pessoa pode abrir uma conversa e chegar a uma demanda. Se houver abuso, restrinja por captcha ou por proxy/WAF.
+
 ## Arquitetura
 
 ```
@@ -236,17 +267,21 @@ app/
 ├── Enums/                                  WhatsAppDriver, ConversationStatus, DemandStatus,
 │                                           MenuNodeType, MessageDirection, WebhookLogStatus
 ├── Http/Controllers/Api/WhatsAppWebhookController.php   Controller fino (verify + handle)
+├── Http/Requests/Webhook/                  WhatsAppWebhookRequest (autoriza pela assinatura/token do provedor), VerifyWhatsAppWebhookRequest
 ├── Jobs/ProcessIncomingMessageJob.php      Processa a mensagem em fila
+├── Http/Controllers/Api/ChatController.php Chat web (start, messages/polling, send)
+├── Http/Requests/Chat/ · Http/Resources/ChatMessageResource.php
 ├── Services/
 │   ├── Webhook/   HandleWebhookService, VerifyWebhookService
-│   ├── WhatsApp/  ProviderManager, SendMessageService, Drivers/{Meta,Evolution,Twilio}Provider
+│   ├── Chat/      Start/Send/List WebChat…Service, ProcessWebChatMessageService (leva a mensagem ao NavigateMenuService)
+│   ├── WhatsApp/  ProviderManager, SendMessageService, Drivers/{Meta,Evolution,Twilio,Web}Provider
 │   ├── Menu/      NavigateMenuService (máquina de estados do bot), BuildMenuTreeService (árvore do painel)
-│   └── Demand/    ReplyDemandService, CloseDemandService
+│   └── Demand/    ReplyDemandService, CloseDemandService, MoveDemandService
 ├── Support/WhatsApp/                       IncomingMessage, SendResult, Phone (DTOs e helper)
-├── Models/                                 WhatsApp{WebhookLog,MenuNode,Conversation,Demand,DemandMessage}
+├── Models/                                 WhatsApp{WebhookLog,MenuNode,Conversation,Demand,DemandMessage}, ChatSession, Message
 └── Filament/
     ├── Resources/    MenuNodes, Demands, WebhookLogs, Users  (Resource + Pages + Schemas + Tables)
-    ├── Actions/      ReplyDemandAction, CloseDemandAction, DeleteMenuNodeAction (+ em lote)
+    ├── Actions/      ReplyDemandAction, CloseDemandAction, OpenDemandAction, DeleteMenuNodeAction (+ em lote)
     └── Filters/      Filtros por model (Common, Demand, WebhookLog, MenuNode, User)
 config/whatsapp.php                         Credenciais e opções dos provedores
 routes/api.php                              /api/webhooks/{meta|evolution|twilio}
@@ -260,6 +295,8 @@ Cada provedor implementa `WhatsAppProvider`:
 | `parse(Request)` | Converte o payload do provedor em `IncomingMessage` (telefone só dígitos, texto, opção escolhida, id). |
 | `sendText(phone, text)` | Envia a resposta pela API do provedor e devolve um `SendResult`. |
 
+O canal **Web** também implementa essa interface (o envio vira uma linha em `messages`; `authorize` e `parse` não se aplicam, pois não há webhook).
+
 O resto do sistema (menu, demandas, painel) **não conhece** o provedor: só usa `IncomingMessage` e `SendMessageService`.
 
 ## Banco de dados
@@ -271,6 +308,8 @@ O resto do sistema (menu, demandas, painel) **não conhece** o provedor: só usa
 | `whatsapp_conversations` | Estado por telefone: `driver`, `phone`, `status` (navegando, com atendente, finalizada), `current_node_id`, `last_interaction_at`. |
 | `whatsapp_demands` | Demanda por setor: `driver`, `phone`, `sector`, `title`, `status`, `notes`, `position`, `assigned_user_id`. |
 | `whatsapp_demand_messages` | Histórico da demanda: `direction` (recebida/enviada), `body`, `user_id`. |
+| `chat_sessions` | Uma por visitante do chat web: `token` (segredo), `identifier` (`web-...`, usado como "telefone" das conversas e demandas), `name`, `email`, `phone`, `last_seen_at`. |
+| `messages` | Mensagens do chat web consultadas por polling: `chat_session_id`, `direction` (inbound = visitante, outbound = bot/equipe), `body`, `user_id`. |
 
 Todas usam soft delete e seguem o padrão de tabelas do projeto.
 
@@ -293,7 +332,9 @@ Rodam em SQLite em memória e com fila `sync`; as chamadas HTTP aos provedores s
 
 - **Webhooks** (`tests/Feature/Webhook`): verificação e assinatura da Meta, token da Evolution, assinatura do Twilio, rejeição sem segredo configurado, deduplicação, eventos ignorados e payload sem `apikey`.
 - **Fluxo do bot** (`BotFlowTest`): navegação, abertura de demanda, silêncio com demanda ativa, opção inválida, reinício, timeout, resposta do atendente e conclusão.
-- **Painel** (`AdminPanelTest`): páginas dos resources, ações Responder/Concluir, validação do formulário do menu e filtros.
+- **Chat web** (`WebChatTest`): menu ao iniciar, navegação até o setor, silêncio do bot com atendente, opção inválida, `0`, timeout, resposta do painel por polling, menu de volta após concluir, isolamento de tokens, limite de requisições e **todos os setores do menu completo alcançáveis pelo chat**.
+- **Kanban** (`DemandKanbanTest`, `MoveDemandServiceTest`): colunas e cards, filtros, mover com posição, confirmação ao concluir (e cancelar), reabrir, limite da coluna Concluída, ação Abrir/responder e conversa escapando HTML.
+- **Painel** (`AdminPanelTest`): páginas dos resources, ações Responder/Concluir, validação do formulário do menu e filtros dos logs.
 - **Construtor do menu** (`MenuBuilderTest`): raiz única, padrão do pai, número único por menu, opções de pai, proteção de remoção e ordem da árvore.
 - **Models** (`tests/Unit/Models`): CRUD com soft delete, casts e relações.
 
@@ -308,5 +349,8 @@ Rodam em SQLite em memória e com fila `sync`; as chamadas HTTP aos provedores s
 | Log **Falhou** | Abra o log e leia o campo **Erro**. |
 | Bot não responde a um contato específico | Ele tem uma demanda ativa: responda ou **conclua** a demanda. |
 | Nada é enviado | Não há opção raiz ativa: crie um item sem "Dentro de" em **Menu do bot**. |
+| Chat web: a resposta da equipe não aparece | A aba do visitante precisa estar visível (o polling pausa com a aba oculta); a mensagem chega em até 3 segundos. |
+| Chat web não mostra o menu | Não há opção raiz ativa: crie o menu em **Menu do bot**. |
+| Chat web responde 429 | Limite de requisições por IP; aguarde um minuto. |
 | Mudei o `.env` e nada mudou | `php artisan config:clear`. |
 # laravel-wpp-boot

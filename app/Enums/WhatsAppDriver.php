@@ -7,6 +7,7 @@ enum WhatsAppDriver: string
     case Meta = 'meta';
     case Evolution = 'evolution';
     case Twilio = 'twilio';
+    case Web = 'web';
 
     public function label(): string
     {
@@ -14,6 +15,7 @@ enum WhatsAppDriver: string
             self::Meta => 'WhatsApp Cloud API (Meta)',
             self::Evolution => 'Evolution API',
             self::Twilio => 'Twilio',
+            self::Web => 'Web (chat do site)',
         };
     }
 }

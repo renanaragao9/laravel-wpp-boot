@@ -6,8 +6,11 @@ use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
-    public function test_root_redirects_to_login(): void
+    public function test_root_opens_the_web_chat(): void
     {
-        $this->get('/')->assertRedirect('/admin/login');
+        $this->get('/')
+            ->assertOk()
+            ->assertSee('Iniciar atendimento')
+            ->assertSee('/api/chat', false);
     }
 }

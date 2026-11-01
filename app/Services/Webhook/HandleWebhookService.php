@@ -19,8 +19,6 @@ class HandleWebhookService
     {
         $provider = $this->providers->for($driver);
 
-        abort_unless($provider->authorize($request), 403, 'Webhook não autorizado.');
-
         $messages = $provider->parse($request);
         $payload = $this->sanitize($request->all());
 

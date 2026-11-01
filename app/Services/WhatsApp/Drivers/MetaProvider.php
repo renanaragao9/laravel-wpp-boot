@@ -20,19 +20,19 @@ class MetaProvider implements WhatsAppProvider
         return WhatsAppDriver::Meta;
     }
 
-    public function verifyChallenge(Request $request): ?string
+    public function verifyChallenge(array $data): ?string
     {
         $token = (string) config('whatsapp.meta.verify_token');
 
-        if ($token === '' || $request->query('hub_mode') !== 'subscribe') {
+        if ($token === '' || ($data['hub_mode'] ?? null) !== 'subscribe') {
             return null;
         }
 
-        if (! hash_equals($token, (string) $request->query('hub_verify_token'))) {
+        if (! hash_equals($token, (string) ($data['hub_verify_token'] ?? ''))) {
             return null;
         }
 
-        return (string) $request->query('hub_challenge');
+        return (string) ($data['hub_challenge'] ?? '');
     }
 
     public function authorize(Request $request): bool

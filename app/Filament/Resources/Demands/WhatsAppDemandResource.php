@@ -8,13 +8,11 @@ use App\Filament\Resources\Demands\Pages\ViewWhatsAppDemand;
 use App\Filament\Resources\Demands\RelationManagers\MessagesRelationManager;
 use App\Filament\Resources\Demands\Schemas\WhatsAppDemandForm;
 use App\Filament\Resources\Demands\Schemas\WhatsAppDemandInfolist;
-use App\Filament\Resources\Demands\Tables\DemandsTable;
 use App\Models\WhatsAppDemand;
 use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
 use UnitEnum;
 
 class WhatsAppDemandResource extends Resource
@@ -50,11 +48,6 @@ class WhatsAppDemandResource extends Resource
     public static function infolist(Schema $schema): Schema
     {
         return WhatsAppDemandInfolist::configure($schema);
-    }
-
-    public static function table(Table $table): Table
-    {
-        return DemandsTable::configure($table);
     }
 
     public static function getRelations(): array

@@ -6,6 +6,7 @@ use App\Enums\DemandStatus;
 use App\Enums\WhatsAppDriver;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class WhatsAppDemand extends BaseModel
 {
@@ -47,6 +48,11 @@ class WhatsAppDemand extends BaseModel
     public function assignedUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_user_id');
+    }
+
+    public function chatSession(): HasOne
+    {
+        return $this->hasOne(ChatSession::class, 'identifier', 'phone');
     }
 
     public function messages(): HasMany

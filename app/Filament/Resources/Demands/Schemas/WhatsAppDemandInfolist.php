@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Demands\Schemas;
 
+use App\Enums\WhatsAppDriver;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -31,6 +32,16 @@ class WhatsAppDemandInfolist
                         TextEntry::make('phone')
                             ->label('Telefone')
                             ->copyable(),
+
+                        TextEntry::make('chatSession.email')
+                            ->label('E-mail do visitante')
+                            ->placeholder('-')
+                            ->visible(fn ($record) => $record->driver === WhatsAppDriver::Web),
+
+                        TextEntry::make('chatSession.phone')
+                            ->label('Telefone informado')
+                            ->placeholder('-')
+                            ->visible(fn ($record) => $record->driver === WhatsAppDriver::Web),
 
                         TextEntry::make('driver')
                             ->label('Provedor')
