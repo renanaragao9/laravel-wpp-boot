@@ -50,9 +50,6 @@ class WebChatTest extends TestCase
         return ChatSession::query()->where('token', $token)->firstOrFail();
     }
 
-    /**
-     * @return list<string>
-     */
     private function botTexts(string $token): array
     {
         return $this->chat($token)->messages()->where('direction', MessageDirection::Outbound->value)->orderBy('id')->pluck('body')->all();

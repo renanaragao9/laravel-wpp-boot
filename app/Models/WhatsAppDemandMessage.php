@@ -13,6 +13,7 @@ class WhatsAppDemandMessage extends BaseModel
         'direction',
         'message_id',
         'body',
+        'read_at',
         'demand_id',
         'user_id',
     ];
@@ -21,6 +22,7 @@ class WhatsAppDemandMessage extends BaseModel
     {
         return [
             'direction' => MessageDirection::class,
+            'read_at' => 'datetime',
         ];
     }
 

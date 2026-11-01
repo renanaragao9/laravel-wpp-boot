@@ -21,6 +21,7 @@ class WhatsAppDemand extends BaseModel
         'status',
         'notes',
         'position',
+        'seen_at',
         'conversation_id',
         'menu_node_id',
         'assigned_user_id',
@@ -32,6 +33,7 @@ class WhatsAppDemand extends BaseModel
             'driver' => WhatsAppDriver::class,
             'status' => DemandStatus::class,
             'position' => 'integer',
+            'seen_at' => 'datetime',
         ];
     }
 

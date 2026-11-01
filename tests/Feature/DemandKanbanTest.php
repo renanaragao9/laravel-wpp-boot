@@ -218,10 +218,42 @@ class DemandKanbanTest extends TestCase
             ->assertActionMounted('open')
             ->setActionData(['message' => 'Já estou vendo!'])
             ->callMountedAction()
-            ->assertNotified('Mensagem enviada');
+            ->assertNotified('Mensagem enviada')
+            ->assertActionMounted('open')
+            ->assertSet('mountedActions.0.data.message', '');
 
         $this->assertDatabaseHas('whatsapp_demand_messages', ['demand_id' => $demand->id, 'body' => 'Já estou vendo!', 'user_id' => $this->user->id]);
         $this->assertSame(DemandStatus::InProgress, $demand->fresh()->status);
+    }
+
+    public function test_open_action_stays_open_after_sending_and_the_next_reply_works(): void
+    {
+        config(['whatsapp.meta' => ['access_token' => 'tok', 'phone_number_id' => '123', 'graph_version' => 'v21.0']]);
+        Http::fake(['graph.facebook.com/*' => Http::response(['messages' => [['id' => 'wamid.x']]])]);
+        $demand = $this->demand();
+
+        $page = Livewire::test(ListDemands::class)->mountAction('open', ['id' => $demand->id]);
+
+        $page->setActionData(['message' => 'Primeira'])->callMountedAction()->assertActionMounted('open');
+        $page->setActionData(['message' => 'Segunda'])->callMountedAction()->assertActionMounted('open');
+
+        $this->assertSame(['Primeira', 'Segunda'], $demand->messages()->where('direction', 'outbound')->orderBy('id')->pluck('body')->all());
+    }
+
+    public function test_failed_send_keeps_the_chat_open_with_the_typed_text(): void
+    {
+        config(['whatsapp.meta' => ['access_token' => '', 'phone_number_id' => '', 'graph_version' => 'v21.0']]);
+        $demand = $this->demand();
+
+        Livewire::test(ListDemands::class)
+            ->mountAction('open', ['id' => $demand->id])
+            ->setActionData(['message' => 'Não vai sair'])
+            ->callMountedAction()
+            ->assertNotified('Falha ao enviar')
+            ->assertActionMounted('open')
+            ->assertSet('mountedActions.0.data.message', 'Não vai sair');
+
+        $this->assertDatabaseCount('whatsapp_demand_messages', 0);
     }
 
     public function test_thread_view_lists_messages_with_authors_and_handles_empty_demands(): void
@@ -261,5 +293,146 @@ class DemandKanbanTest extends TestCase
         $this->get('/admin/demandas')->assertOk()->assertDontSee('fi-ta-table', false);
         $this->get("/admin/demandas/{$demand->id}")->assertOk();
         $this->get("/admin/demandas/{$demand->id}/edit")->assertOk();
+    }
+
+    public function test_open_action_hides_the_internal_identifier_of_web_demands(): void
+    {
+        $web = $this->demand(['driver' => WhatsAppDriver::Web, 'phone' => 'web-segredo123', 'push_name' => 'Maria Web']);
+        $meta = $this->demand(['phone' => '5585999990000', 'push_name' => 'João']);
+
+        $description = fn (WhatsAppDemand $demand) => Livewire::test(ListDemands::class)
+            ->mountAction('open', ['id' => $demand->id])
+            ->instance()
+            ->getMountedAction()
+            ->getModalDescription();
+
+        $this->assertSame('Maria Web · Chat web', $description($web));
+        $this->assertSame('João · 5585999990000 · WhatsApp Cloud API (Meta)', $description($meta));
+    }
+
+    private function inbound(WhatsAppDemand $demand, string $body = 'oi'): WhatsAppDemandMessage
+    {
+        return WhatsAppDemandMessage::create(['demand_id' => $demand->id, 'direction' => MessageDirection::Inbound, 'body' => $body]);
+    }
+
+    public function test_unseen_demand_is_flagged_as_new_and_blinks(): void
+    {
+        $this->demand(['title' => 'Demanda recém chegada']);
+
+        Livewire::test(ListDemands::class)
+            ->assertSee('Nova demanda')
+            ->assertSee('kb-card kb-unread', false)
+            ->assertSee('1 demanda precisa de atenção');
+    }
+
+    public function test_unread_messages_show_the_count_and_the_alert_banner(): void
+    {
+        $seen = $this->demand(['seen_at' => now()]);
+        $this->inbound($seen);
+        $this->inbound($seen);
+        $quiet = $this->demand(['seen_at' => now()]);
+
+        Livewire::test(ListDemands::class)
+            ->assertSee('2 mensagens novas')
+            ->assertSee('1 demanda precisa de atenção')
+            ->assertSee('kb-card kb-unread', false);
+
+        $this->assertSame(1, Livewire::test(ListDemands::class)->instance()->attentionCount());
+        $this->assertNotNull($quiet->fresh()->seen_at);
+    }
+
+    public function test_read_and_seen_demands_do_not_blink_and_there_is_no_banner(): void
+    {
+        $demand = $this->demand(['seen_at' => now()]);
+        WhatsAppDemandMessage::create(['demand_id' => $demand->id, 'direction' => MessageDirection::Inbound, 'body' => 'lida', 'read_at' => now()]);
+
+        Livewire::test(ListDemands::class)
+            ->assertDontSee('kb-card kb-unread', false)
+            ->assertDontSee('precisa de atenção')
+            ->assertDontSee('mensagem nova');
+    }
+
+    public function test_outbound_messages_never_count_as_unread(): void
+    {
+        $demand = $this->demand(['seen_at' => now()]);
+        WhatsAppDemandMessage::create(['demand_id' => $demand->id, 'direction' => MessageDirection::Outbound, 'body' => 'resposta']);
+
+        $this->assertSame(0, Livewire::test(ListDemands::class)->instance()->attentionCount());
+    }
+
+    public function test_done_demands_do_not_raise_the_alert(): void
+    {
+        $this->demand(['status' => DemandStatus::Done]);
+
+        $this->assertSame(0, Livewire::test(ListDemands::class)->instance()->attentionCount());
+        Livewire::test(ListDemands::class)->assertDontSee('kb-card kb-unread', false);
+    }
+
+    public function test_opening_the_conversation_marks_everything_as_read(): void
+    {
+        $demand = $this->demand();
+        $first = $this->inbound($demand);
+        $second = $this->inbound($demand);
+
+        $page = Livewire::test(ListDemands::class)->mountAction('open', ['id' => $demand->id]);
+
+        $this->assertNotNull($demand->fresh()->seen_at);
+        $this->assertNotNull($first->fresh()->read_at);
+        $this->assertNotNull($second->fresh()->read_at);
+        $this->assertSame(0, $page->instance()->attentionCount());
+    }
+
+    public function test_polling_marks_messages_that_arrive_while_the_conversation_is_open(): void
+    {
+        $demand = $this->demand();
+        $page = Livewire::test(ListDemands::class)->mountAction('open', ['id' => $demand->id]);
+
+        $late = $this->inbound($demand, 'chegou com o painel aberto');
+        $this->assertNull($late->fresh()->read_at);
+
+        $page->call('refreshBoard');
+
+        $this->assertNotNull($late->fresh()->read_at);
+    }
+
+    public function test_polling_without_an_open_conversation_leaves_messages_unread(): void
+    {
+        $demand = $this->demand(['seen_at' => now()]);
+        $message = $this->inbound($demand);
+
+        Livewire::test(ListDemands::class)->call('refreshBoard');
+
+        $this->assertNull($message->fresh()->read_at);
+    }
+
+    public function test_a_demand_created_after_the_page_loaded_appears_on_the_next_poll(): void
+    {
+        $page = Livewire::test(ListDemands::class)->assertDontSee('Demanda que acabou de chegar');
+
+        $this->demand(['title' => 'Demanda que acabou de chegar']);
+
+        $page->call('refreshBoard')->assertSee('Demanda que acabou de chegar')->assertSee('Nova demanda');
+    }
+
+    public function test_polling_is_every_five_seconds_and_the_page_exposes_the_counter_for_the_title(): void
+    {
+        $this->demand();
+
+        $this->get('/admin/demandas')
+            ->assertOk()
+            ->assertSee('wire:poll.5s="refreshBoard"', false)
+            ->assertSee('id="kb-attention" data-count="1"', false);
+    }
+
+    public function test_viewing_the_demand_page_marks_it_as_read(): void
+    {
+        $demand = $this->demand();
+        $message = $this->inbound($demand);
+        $this->actingAs(User::factory()->create(['is_master' => true]));
+
+        $this->get("/admin/demandas/{$demand->id}")->assertOk();
+
+        $this->assertNotNull($demand->fresh()->seen_at);
+        $this->assertNotNull($message->fresh()->read_at);
     }
 }

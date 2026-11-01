@@ -3,16 +3,17 @@
 namespace App\Filament\Resources\Demands\Pages;
 
 use App\Enums\DemandStatus;
+use App\Enums\MessageDirection;
 use App\Enums\WhatsAppDriver;
 use App\Filament\Actions\CloseDemandAction;
 use App\Filament\Actions\OpenDemandAction;
 use App\Filament\Resources\Demands\WhatsAppDemandResource;
 use App\Models\WhatsAppDemand;
 use App\Models\WhatsAppDemandMessage;
+use App\Services\Demand\MarkDemandAsReadService;
 use App\Services\Demand\MoveDemandService;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\Page;
-use Illuminate\Support\Collection;
 use Livewire\Attributes\Url;
 
 class ListDemands extends Page
@@ -50,6 +51,29 @@ class ListDemands extends Page
         return CloseDemandAction::make()->record(fn (array $arguments) => WhatsAppDemand::findOrFail($arguments['id']));
     }
 
+    public function refreshBoard(): void
+    {
+        foreach ($this->mountedActions as $mounted) {
+            if (($mounted['name'] ?? null) === 'open' && isset($mounted['arguments']['id'])) {
+                $demand = WhatsAppDemand::query()->find($mounted['arguments']['id']);
+
+                if ($demand !== null) {
+                    app(MarkDemandAsReadService::class)->run($demand);
+                }
+            }
+        }
+    }
+
+    public function attentionCount(): int
+    {
+        return WhatsAppDemand::query()
+            ->where('status', '!=', DemandStatus::Done->value)
+            ->where(fn ($query) => $query
+                ->whereNull('seen_at')
+                ->orWhereHas('messages', fn ($messages) => $messages->where('direction', MessageDirection::Inbound->value)->whereNull('read_at')))
+            ->count();
+    }
+
     public function moveDemand(int|string $id, string $status, int $position): void
     {
         $demand = WhatsAppDemand::query()->findOrFail((int) $id);
@@ -68,9 +92,6 @@ class ListDemands extends Page
         app(MoveDemandService::class)->run($demand, $target, $position);
     }
 
-    /**
-     * @return array<int, array{status: DemandStatus, total: int, demands: Collection<int, WhatsAppDemand>}>
-     */
     public function getColumns(): array
     {
         return collect(DemandStatus::cases())->map(function (DemandStatus $status): array {
@@ -85,17 +106,11 @@ class ListDemands extends Page
         })->all();
     }
 
-    /**
-     * @return array<string, string>
-     */
     public function sectorOptions(): array
     {
         return WhatsAppDemand::query()->distinct()->orderBy('sector')->pluck('sector', 'sector')->all();
     }
 
-    /**
-     * @return array<string, string>
-     */
     public function driverOptions(): array
     {
         return collect(WhatsAppDriver::cases())->mapWithKeys(fn (WhatsAppDriver $d) => [$d->value => $d->label()])->all();
@@ -105,6 +120,7 @@ class ListDemands extends Page
     {
         return WhatsAppDemand::query()
             ->with('assignedUser')
+            ->withCount(['messages as unread_count' => fn ($messages) => $messages->where('direction', MessageDirection::Inbound->value)->whereNull('read_at')])
             ->addSelect(['last_message' => WhatsAppDemandMessage::query()
                 ->select('body')
                 ->whereColumn('demand_id', 'whatsapp_demands.id')

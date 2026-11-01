@@ -17,6 +17,7 @@ return new class extends Migration
             $table->string('title');
             $table->string('status')->default('open');
             $table->text('notes')->nullable();
+            $table->dateTime('seen_at')->nullable();
             $table->integer('position')->default(0);
             $table->foreignId('conversation_id')->nullable()->constrained('whatsapp_conversations')->nullOnDelete();
             $table->foreignId('menu_node_id')->nullable()->constrained('whatsapp_menu_nodes')->nullOnDelete();
